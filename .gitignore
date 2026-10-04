@@ -1,0 +1,9 @@
+.DS_Store
+.cache/
+coverage.out
+coverage.html
+*.test
+*.prof
+.env
+.env.*
+!.env.example
