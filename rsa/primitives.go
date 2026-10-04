@@ -4,11 +4,12 @@ package rsa
 
 import (
 	"crypto"
+	"hash"
+	"math/big"
+
 	"github.com/erthoaers/cryptolab-golang/sha1"
 	"github.com/erthoaers/cryptolab-golang/sha256"
 	"github.com/erthoaers/cryptolab-golang/sha512"
-	"hash"
-	"math/big"
 )
 
 // I2OSP encodes x as exactly xLen big-endian bytes, including leading zeros.
@@ -144,11 +145,15 @@ func mgf1(h hash.Hash, seed []byte, length int) ([]byte, error) {
 		return nil, ErrInvalidLength
 	}
 	hLen := h.Size()
-	if int64(length) > (1<<32)*int64(hLen) {
+	if uint64(length) > (1<<32)*uint64(hLen) {
 		return nil, ErrMessageTooLong
 	}
-	blocks := (length + hLen - 1) / hLen
-	T := make([]byte, 0, blocks*hLen)
+	blocks := length / hLen
+	if length%hLen != 0 {
+		blocks++
+	}
+	T := make([]byte, length)
+	offset := 0
 	for i := 0; i < blocks; i++ {
 		counter, err := I2OSP(big.NewInt(int64(i)), 4)
 		if err != nil {
@@ -157,7 +162,7 @@ func mgf1(h hash.Hash, seed []byte, length int) ([]byte, error) {
 		h.Reset()
 		h.Write(seed)
 		h.Write(counter)
-		T = append(T, h.Sum(nil)...)
+		offset += copy(T[offset:], h.Sum(nil))
 	}
-	return T[:length], nil
+	return T, nil
 }
