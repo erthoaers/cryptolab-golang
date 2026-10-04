@@ -3,8 +3,10 @@
 package rsa
 
 import (
+	"crypto/subtle"
 	"hash"
 	"io"
+	"math/big"
 )
 
 // EncryptOAEP encrypts msg using h for both OAEP and MGF1 (RFC 8017 7.1.1).
@@ -22,7 +24,12 @@ func EncryptOAEP(
 // EncryptOAEPWithOptions accepts the standard options type. A zero MGFHash
 // selects Hash; otherwise the two hashes may differ. Resolve both with newHash.
 // Nil options return ErrInvalidOptions; Hash must identify a supported hash.
-func EncryptOAEPWithOptions(random io.Reader, pub *PublicKey, msg []byte, opts *OAEPOptions) ([]byte, error) {
+func EncryptOAEPWithOptions(
+	random io.Reader,
+	pub *PublicKey,
+	msg []byte,
+	opts *OAEPOptions,
+) ([]byte, error) {
 	if opts == nil {
 		return nil, ErrInvalidOptions
 	}
@@ -46,10 +53,12 @@ func encryptOAEP(
 	pub *PublicKey,
 	msg, label []byte,
 ) ([]byte, error) {
+	// Check that the label length does not exceed the maximum allowed value.
 	if uint64(len(label)) > 1<<61-1 {
 		return nil, ErrMessageTooLong
 	}
-
+	// Determine the length of the RSA modulus in bytes (k) and the hash output length (hLen).
+	// Check that the message length does not exceed the maximum allowed for OAEP encoding.
 	k := pub.Size()
 	hLen := h.Size()
 	if len(msg) > k-2*hLen-2 {
@@ -116,14 +125,148 @@ func encryptOAEP(
 // DecryptOAEP decrypts using h for both OAEP and MGF1 (RFC 8017 7.1.2).
 // Preserve ciphertext and label. Invalid length, range, label hash, padding
 // or delimiter must produce nil, ErrDecryption without exposing the cause.
-func DecryptOAEP(h hash.Hash, random io.Reader, priv *PrivateKey, ciphertext, label []byte) ([]byte, error) {
-	panic(todo("TODO RSA-07: implement RSAES-OAEP decryption; RFC 8017 section 7.1.2"))
+func DecryptOAEP(
+	h hash.Hash,
+	random io.Reader,
+	priv *PrivateKey,
+	ciphertext, label []byte,
+) ([]byte, error) {
+	return decryptOAEP(h, h, random, priv, ciphertext, label)
 }
 
 // decryptOAEPWithOptions is the Decrypter path supporting independent MGFHash.
 // It must enforce the same decoding checks as DecryptOAEP.
 func decryptOAEPWithOptions(random io.Reader, priv *PrivateKey, ciphertext []byte, opts *OAEPOptions) ([]byte, error) {
-	panic(todo("TODO RSA-07: implement OAEP decryption with options; RFC 8017 section 7.1.2"))
+	if opts == nil {
+		return nil, ErrInvalidOptions
+	}
+	h, err := newHash(opts.Hash)
+	if err != nil {
+		return nil, err
+	}
+	mgfHash := h
+	if opts.MGFHash != 0 {
+		mgfHash, err = newHash(opts.MGFHash)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return decryptOAEP(h, mgfHash, random, priv, ciphertext, opts.Label)
+}
+
+func decryptOAEP(
+	h, mgfHash hash.Hash,
+	_ io.Reader,
+	priv *PrivateKey,
+	ciphertext, label []byte,
+) ([]byte, error) {
+	// Check that the label length does not exceed the maximum allowed value.
+	if uint64(len(label)) > 1<<61-1 {
+		return nil, ErrDecryption
+	}
+	// Determine the length of the RSA modulus in bytes (k) and the hash output length (hLen).
+	// Check that the ciphertext length matches the expected length for the RSA modulus.
+	k := priv.Size()
+	if len(ciphertext) != k {
+		return nil, ErrDecryption
+	}
+	hLen := h.Size()
+	if k < 2*hLen+2 {
+		return nil, ErrDecryption
+	}
+
+	// Convert the ciphertext to an integer representative and check its range.
+	c := OS2IP(ciphertext)
+	if c.Cmp(priv.N) > 0 {
+		return nil, ErrDecryption
+	}
+	var m *big.Int
+	var err error
+	useCRT := len(priv.Primes) == 2 &&
+		priv.Primes[0] != nil &&
+		priv.Primes[1] != nil &&
+		priv.Precomputed.Dp != nil &&
+		priv.Precomputed.Dq != nil &&
+		priv.Precomputed.Qinv != nil
+	// Perform the RSA decryption operation to obtain the message representative (m).
+	if useCRT {
+		// Use the Chinese Remainder Theorem (CRT) for faster decryption if precomputed values are available.
+		var err error
+		m, err = RSADPCRT(priv, c)
+		if err != nil {
+			return nil, ErrDecryption
+		}
+	} else {
+		// Fall back to standard RSA decryption.
+		m, err = RSADP(priv, c)
+		if err != nil {
+			return nil, ErrDecryption
+		}
+	}
+	// Convert the message representative (m) to an encoded message (EM) of length k using I2OSP.
+	em, err := I2OSP(m, k)
+	if err != nil {
+		return nil, ErrDecryption
+	}
+	// Separate the encoded message into its components: Y, maskedSeed, and maskedDB.
+	y := em[0]
+	maskedSeed := em[1 : 1+hLen]
+	maskedDB := em[1+hLen:]
+
+	// Compute the seed by XORing the maskedSeed with the seedMask derived from the maskedDB.
+	seedMask, err := mgf1(mgfHash, maskedDB, hLen)
+	if err != nil {
+		return nil, ErrDecryption
+	}
+	seed := make([]byte, hLen)
+	for i := 0; i < hLen; i++ {
+		seed[i] = maskedSeed[i] ^ seedMask[i]
+	}
+	// Compute the data block (DB) by XORing the maskedDB with the dbMask derived from the seed.
+	dbMask, err := mgf1(mgfHash, seed, k-1-hLen)
+	if err != nil {
+		return nil, ErrDecryption
+	}
+	db := make([]byte, k-1-hLen)
+	for i := 0; i < len(db); i++ {
+		db[i] = maskedDB[i] ^ dbMask[i]
+	}
+	// Check that the first byte of the data block is 0x00 as required by the OAEP encoding.
+	if len(db) == 0 {
+		return nil, ErrDecryption
+	}
+
+	// Verify that the hash of the label matches the corresponding portion of the data block.
+	h.Reset()
+	h.Write(label)
+	lHash := h.Sum(nil)
+	valid := subtle.ConstantTimeByteEq(y, 0) &
+		subtle.ConstantTimeCompare(db[:hLen], lHash)
+
+	// Scan the data block for the delimiter (0x01) and check for invalid bytes (anything other than 0x00 or 0x01) before the delimiter.
+	looking := 1
+	bad := 0
+	delimiterIndex := 0
+
+	for i := hLen; i < len(db); i++ {
+		isZero := subtle.ConstantTimeByteEq(db[i], 0)
+		isOne := subtle.ConstantTimeByteEq(db[i], 1)
+
+		// Check for invalid bytes before the delimiter. Only 0x00 and 0x01 are allowed.
+		bad |= looking & (1 ^ (isZero | isOne))
+
+		// Record the index of the first 0x01 byte as the delimiter.
+		delimiterIndex = subtle.ConstantTimeSelect(
+			looking&isOne, i, delimiterIndex,
+		)
+		looking &= 1 ^ isOne
+	}
+
+	valid &= (1 ^ bad) & (1 ^ looking)
+	if valid != 1 {
+		return nil, ErrDecryption
+	}
+	return db[delimiterIndex+1:], nil
 }
 
 // EncryptPKCS1v15 is the legacy RSAES-PKCS1-v1_5 exercise (RFC 8017 7.2.1).

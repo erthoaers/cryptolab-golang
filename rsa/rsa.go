@@ -89,10 +89,8 @@ func NewPrivateKey(p, q *big.Int, e int) (*PrivateKey, error) {
 	}
 
 	priv := &PrivateKey{
-		PublicKey: PublicKey{
-			N: n,
-			E: e,
-		},
+		N:      n,
+		E:      e,
 		D:      d,
 		Primes: []*big.Int{new(big.Int).Set(p), new(big.Int).Set(q)},
 	}
