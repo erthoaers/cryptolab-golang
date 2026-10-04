@@ -10,15 +10,107 @@ import (
 // EncryptOAEP encrypts msg using h for both OAEP and MGF1 (RFC 8017 7.1.1).
 // Read the seed from random; preserve msg and label. Enforce the k-2*hLen-2
 // bound with ErrMessageTooLong and return a ciphertext of exactly k bytes.
-func EncryptOAEP(h hash.Hash, random io.Reader, pub *PublicKey, msg, label []byte) ([]byte, error) {
-	panic(todo("TODO RSA-07: implement RSAES-OAEP encryption; RFC 8017 section 7.1.1"))
+func EncryptOAEP(
+	h hash.Hash,
+	random io.Reader,
+	pub *PublicKey,
+	msg, label []byte,
+) ([]byte, error) {
+	return encryptOAEP(h, h, random, pub, msg, label)
 }
 
 // EncryptOAEPWithOptions accepts the standard options type. A zero MGFHash
 // selects Hash; otherwise the two hashes may differ. Resolve both with newHash.
 // Nil options return ErrInvalidOptions; Hash must identify a supported hash.
 func EncryptOAEPWithOptions(random io.Reader, pub *PublicKey, msg []byte, opts *OAEPOptions) ([]byte, error) {
-	panic(todo("TODO RSA-07: implement the OAEP options entry point; RFC 8017 section 7.1.1"))
+	if opts == nil {
+		return nil, ErrInvalidOptions
+	}
+	h, err := newHash(opts.Hash)
+	if err != nil {
+		return nil, err
+	}
+	mgfHash := h
+	if opts.MGFHash != 0 {
+		mgfHash, err = newHash(opts.MGFHash)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return encryptOAEP(h, mgfHash, random, pub, msg, opts.Label)
+}
+
+func encryptOAEP(
+	h, mgfHash hash.Hash,
+	random io.Reader,
+	pub *PublicKey,
+	msg, label []byte,
+) ([]byte, error) {
+	if uint64(len(label)) > 1<<61-1 {
+		return nil, ErrMessageTooLong
+	}
+
+	k := pub.Size()
+	hLen := h.Size()
+	if len(msg) > k-2*hLen-2 {
+		return nil, ErrMessageTooLong
+	}
+
+	// If the label is nil, treat it as an empty byte slice. Then hash the label to produce lHash.
+	if label == nil {
+		label = []byte{}
+	}
+	h.Reset()
+	h.Write(label)
+	lHash := h.Sum(nil)
+	// Construct the data block (DB) for OAEP encoding. The DB consists of:
+	// lHash || PS || 0x01 || msg, where PS is a padding string of zeros.
+	db := make([]byte, k-hLen-1)
+	copy(db[:hLen], lHash)
+	db[k-hLen-1-len(msg)-1] = 0x01
+	copy(db[k-hLen-1-len(msg):], msg)
+	// Generate a random seed of length hLen for OAEP encoding.
+	seed := make([]byte, hLen)
+	if _, err := io.ReadFull(random, seed); err != nil {
+		return nil, err
+	}
+	// Mask the data block (DB) and the seed using MGF1 to produce the final encoded message.
+	dbMask, err := mgf1(mgfHash, seed, k-hLen-1)
+	if err != nil {
+		return nil, err
+	}
+	// XOR the data block (DB) with the mask to produce the maskedDB.
+	maskedDB := make([]byte, len(db))
+	for i := 0; i < len(db); i++ {
+		maskedDB[i] = db[i] ^ dbMask[i]
+	}
+	// XOR the seed with the seed mask to produce the maskedSeed.
+	maskedSeed := make([]byte, len(seed))
+	seedMask, err := mgf1(mgfHash, maskedDB, hLen)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < len(seed); i++ {
+		maskedSeed[i] = seed[i] ^ seedMask[i]
+	}
+	// The final encoded message is 0x00 || maskedSeed || maskedDB.
+	em := make([]byte, k)
+	em[0] = 0x00
+	copy(em[1:1+hLen], maskedSeed)
+	copy(em[1+hLen:], maskedDB)
+
+	// Convert the encoded message (EM) to an integer message representative (m) using OS2IP.
+	m := OS2IP(em)
+	c, err := RSAEP(pub, m)
+	if err != nil {
+		return nil, err
+	}
+	// Convert the ciphertext integer (c) back to an octet string of length k using I2OSP.
+	ciphertext, err := I2OSP(c, k)
+	if err != nil {
+		return nil, err
+	}
+	return ciphertext, nil
 }
 
 // DecryptOAEP decrypts using h for both OAEP and MGF1 (RFC 8017 7.1.2).
