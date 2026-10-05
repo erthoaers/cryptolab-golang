@@ -65,34 +65,6 @@ go test ./sha256 -run '^$' -fuzz '^FuzzSum256AgainstStandard$' -fuzztime 10s
 
 The PEM files in `rsa/testdata/` are public test keys for fixed fixtures and interoperability tests only. SHA-3 test data is stored in `sha3/testdata/`, with NIST source references and vector descriptions retained in the files.
 
-## Commit Messages
-
-Commit headers follow [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) and must be at most 72 characters:
-
-```text
-<type>[(scope)][!]: <description>
-```
-
-- Use one of these types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`.
-- The optional `scope` usually names an algorithm package or affected area, such as `rsa`, `sha256`, `aes`, or `git`. Use only lowercase letters, digits, `.`, `_`, `/`, and `-`.
-- Briefly describe the change after the colon and a single space. For a breaking change, add `!` before the colon and explain the impact and migration steps in the body.
-- Separate the body from the header with a blank line. Include the reason for the change and actual validation results when useful.
-
-```text
-feat(rsa): implement PSS verification
-fix(rsa): reject signatures with invalid lengths
-test(sha256): add streaming boundary cases
-docs: clarify the learning workflow
-```
-
-After cloning, enable the versioned commit hook from the repository root:
-
-```sh
-git config --local core.hooksPath .githooks
-```
-
-`.githooks/commit-msg` rejects headers with an invalid format or excessive length. Git-generated merge, revert, fixup, and squash messages are exempt. The `core.hooksPath` setting is local and is not included in commits, so each new clone must enable the hook separately.
-
 ## Standards
 
 - [FIPS 180-4 (2015)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf): SHA-1 and SHA-2.
