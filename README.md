@@ -1,22 +1,22 @@
 # cryptolab-golang
 
-按密码学标准实现算法的 Go 学习库，包含源码、分步导读、已知答案和差分测试。无第三方依赖，需要 Go 1.27 或更高版本。
+An educational Go library for implementing cryptographic algorithms from published standards. It includes source code, step-by-step guides, known-answer tests, and differential tests. There are no third-party dependencies. Go 1.27 or later is required.
 
-## 算法
+## Algorithms
 
-| 包 | 范围 | 实现情况 | 导读 |
+| Package | Scope | Status | Guide |
 | --- | --- | --- | --- |
-| `sha1` | SHA-1，一次性与流式接口 | 已实现，用于历史算法学习 | [SHA-1](docs/sha1.md) |
-| `sha256` | SHA-224、SHA-256，一次性与流式接口 | 已实现 | [SHA-256](docs/sha256.md)、[SHA-224](docs/sha224.md) |
-| `sha512` | SHA-384、SHA-512、SHA-512/224、SHA-512/256 | 已实现，支持流式输入 | [SHA-512 家族](docs/sha512.md) |
-| `aes` | AES-128、AES-192、AES-256 | 已实现 `cipher.Block` | [AES](docs/aes.md) |
-| `rsa` | PKCS #1 原语、密钥检查、MGF1、加解密与签名 | 原语和哈希接线已实现；密钥生成及完整方案待完成 | [RSA](docs/rsa.md) |
-| `ed25519` | RFC 8032 的普通 Ed25519 | 分步练习，尚待实现 | [Ed25519](docs/ed25519.md) |
-| `sha3` | 四种 SHA-3、SHAKE128、SHAKE256 | 分步练习，尚待实现 | [FIPS 202](docs/fips202.md) |
+| `sha1` | SHA-1, with one-shot and streaming interfaces | Implemented for studying a historical algorithm | [SHA-1](docs/sha1.md) |
+| `sha256` | SHA-224 and SHA-256, with one-shot and streaming interfaces | Implemented | [SHA-256](docs/sha256.md), [SHA-224](docs/sha224.md) |
+| `sha512` | SHA-384, SHA-512, SHA-512/224, and SHA-512/256 | Implemented, including streaming input | [SHA-512 family](docs/sha512.md) |
+| `aes` | AES-128, AES-192, and AES-256 | Implements `cipher.Block` | [AES](docs/aes.md) |
+| `rsa` | PKCS #1 primitives, key validation, MGF1, encryption, and signatures | Primitives, key validation, MGF1, OAEP, and PSS implemented; key generation and PKCS #1 v1.5 schemes remain exercises | [RSA](docs/rsa.md) |
+| `ed25519` | Pure Ed25519 from RFC 8032 | Step-by-step exercises; implementation pending | [Ed25519](docs/ed25519.md) |
+| `sha3` | Four SHA-3 variants, SHAKE128, and SHAKE256 | Step-by-step exercises; implementation pending | [FIPS 202](docs/fips202.md) |
 
-SHA-224 与 SHA-256 共用 `sha256` 包；SHA-512 家族共用 `sha512` 包；SHA-3 和 SHAKE 的 Keccak 核心集中在 `sha3` 包。
+SHA-224 and SHA-256 share the `sha256` package. The SHA-512 family shares the `sha512` package. SHA-3 and SHAKE share a Keccak core in the `sha3` package.
 
-## 使用
+## Usage
 
 ```go
 package main
@@ -33,11 +33,11 @@ func main() {
 }
 ```
 
-SHA 包提供一次性摘要和 `New` 系列流式构造函数。AES 通过 `NewCipher` 创建分组密码，每次 `Encrypt` / `Decrypt` 处理 16 字节；支持原地操作，短缓冲区或首块部分重叠会 panic。
+The SHA packages provide one-shot digest functions and `New` constructors for streaming input. For AES, `NewCipher` creates a block cipher, and each `Encrypt` or `Decrypt` call processes 16 bytes. In-place operation is supported; short buffers or partial overlap between the first source and destination blocks cause a panic.
 
-## 测试
+## Testing
 
-在仓库根目录运行：
+Run these commands from the repository root:
 
 ```sh
 # Build all packages and tests without executing them.
@@ -55,28 +55,28 @@ go test ./... -count=1
 go vet ./...
 ```
 
-完整测试包含尚未实现的 RSA 方案、Ed25519 和 SHA-3 / SHAKE，相关测试目前会因 TODO 失败。编译、向量录入核对和算法测试分别验证不同内容；未完成测试不跳过。
+The full test suite includes unfinished RSA schemes, Ed25519, and SHA-3 / SHAKE exercises. Their tests currently fail at the remaining TODOs. Compilation, test-vector transcription checks, and algorithm tests verify different properties. Tests for unfinished exercises are not skipped.
 
-各篇导读提供针对单个步骤的测试命令。已实现的哈希函数还可与标准库进行持续模糊测试：
+Each guide includes test commands for individual implementation steps. Implemented hash functions can also be fuzzed against the Go standard library:
 
 ```sh
 go test ./sha256 -run '^$' -fuzz '^FuzzSum256AgainstStandard$' -fuzztime 10s
 ```
 
-`rsa/testdata/` 中的 PEM 文件是公开测试密钥，仅供固定案例与互操作测试使用。SHA-3 测试数据保存在 `sha3/testdata/`，文件内保留 NIST 来源与向量说明。
+The PEM files in `rsa/testdata/` are public test keys for fixed fixtures and interoperability tests only. SHA-3 test data is stored in `sha3/testdata/`, with NIST source references and vector descriptions retained in the files.
 
-## 提交规范
+## Commit Messages
 
-提交标题采用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/)，最长 72 字符：
+Commit headers follow [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) and must be at most 72 characters:
 
 ```text
 <type>[(scope)][!]: <description>
 ```
 
-- `type` 使用 `feat`、`fix`、`docs`、`style`、`refactor`、`perf`、`test`、`build`、`ci`、`chore` 或 `revert`。
-- `scope` 可选，通常填写算法包或影响范围，如 `rsa`、`sha256`、`aes`、`git`；只使用小写字母、数字、`.`、`_`、`/` 和 `-`。
-- `description` 简述改动，冒号后保留一个空格；不兼容变更在冒号前加 `!`，并在正文说明影响及迁移方式。
-- 正文与标题之间空一行，按需说明改动原因和实际验证结果。
+- Use one of these types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`.
+- The optional `scope` usually names an algorithm package or affected area, such as `rsa`, `sha256`, `aes`, or `git`. Use only lowercase letters, digits, `.`, `_`, `/`, and `-`.
+- Briefly describe the change after the colon and a single space. For a breaking change, add `!` before the colon and explain the impact and migration steps in the body.
+- Separate the body from the header with a blank line. Include the reason for the change and actual validation results when useful.
 
 ```text
 feat(rsa): implement PSS verification
@@ -85,23 +85,23 @@ test(sha256): add streaming boundary cases
 docs: clarify the learning workflow
 ```
 
-首次克隆后，在仓库根目录启用已纳入版本控制的提交检查：
+After cloning, enable the versioned commit hook from the repository root:
 
 ```sh
 git config --local core.hooksPath .githooks
 ```
 
-`.githooks/commit-msg` 会拒绝不符合格式或超过长度限制的标题；Git 自动生成的 merge、revert、fixup 和 squash 消息除外。`core.hooksPath` 是本地配置，不随提交传播，新克隆需要单独启用。
+`.githooks/commit-msg` rejects headers with an invalid format or excessive length. Git-generated merge, revert, fixup, and squash messages are exempt. The `core.hooksPath` setting is local and is not included in commits, so each new clone must enable the hook separately.
 
-## 标准
+## Standards
 
-- [FIPS 180-4（2015）](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)：SHA-1 和 SHA-2。
-- [FIPS 197-upd1（2023）](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197-upd1.pdf)：AES。
-- [FIPS 202（2015）](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)：SHA-3 和 SHAKE。
-- [RFC 8017（2016）](https://www.rfc-editor.org/rfc/rfc8017.html)：PKCS #1 v2.2。
-- [RFC 8032（2017）](https://www.rfc-editor.org/rfc/rfc8032.html)：EdDSA。
-- [FIPS 186-5（2023）](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-5.pdf)：数字签名及 RSA 密钥生成。
+- [FIPS 180-4 (2015)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf): SHA-1 and SHA-2.
+- [FIPS 197-upd1 (2023)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197-upd1.pdf): AES.
+- [FIPS 202 (2015)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf): SHA-3 and SHAKE.
+- [RFC 8017 (2016)](https://www.rfc-editor.org/rfc/rfc8017.html): PKCS #1 v2.2.
+- [RFC 8032 (2017)](https://www.rfc-editor.org/rfc/rfc8032.html): EdDSA.
+- [FIPS 186-5 (2023)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-5.pdf): Digital signatures and RSA key generation.
 
-导读位于 `docs/`；源码和测试按算法包组织。测试注明标准章节和数据出处，并以 Go 标准库作独立比较。RSA 的公开接口复用部分标准库类型，密码运算和编码在本库实现。
+Guides are in `docs/`; source code and tests are organized by algorithm package. Tests cite the relevant standard sections and data sources, and use the Go standard library as an independent reference. RSA's public interfaces reuse some standard-library types; cryptographic operations and encodings are implemented in this library.
 
-本库用于学习，未经安全审计，不用于保护真实秘密。
+This library is for learning. It has not undergone a security audit and must not be used to protect real secrets.
