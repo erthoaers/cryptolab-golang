@@ -65,6 +65,34 @@ go test ./sha256 -run '^$' -fuzz '^FuzzSum256AgainstStandard$' -fuzztime 10s
 
 `rsa/testdata/` 中的 PEM 文件是公开测试密钥，仅供固定案例与互操作测试使用。SHA-3 测试数据保存在 `sha3/testdata/`，文件内保留 NIST 来源与向量说明。
 
+## 提交规范
+
+提交标题采用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/)，最长 72 字符：
+
+```text
+<type>[(scope)][!]: <description>
+```
+
+- `type` 使用 `feat`、`fix`、`docs`、`style`、`refactor`、`perf`、`test`、`build`、`ci`、`chore` 或 `revert`。
+- `scope` 可选，通常填写算法包或影响范围，如 `rsa`、`sha256`、`aes`、`git`；只使用小写字母、数字、`.`、`_`、`/` 和 `-`。
+- `description` 简述改动，冒号后保留一个空格；不兼容变更在冒号前加 `!`，并在正文说明影响及迁移方式。
+- 正文与标题之间空一行，按需说明改动原因和实际验证结果。
+
+```text
+feat(rsa): implement PSS verification
+fix(rsa): reject signatures with invalid lengths
+test(sha256): add streaming boundary cases
+docs: clarify the learning workflow
+```
+
+首次克隆后，在仓库根目录启用已纳入版本控制的提交检查：
+
+```sh
+git config --local core.hooksPath .githooks
+```
+
+`.githooks/commit-msg` 会拒绝不符合格式或超过长度限制的标题；Git 自动生成的 merge、revert、fixup 和 squash 消息除外。`core.hooksPath` 是本地配置，不随提交传播，新克隆需要单独启用。
+
 ## 标准
 
 - [FIPS 180-4（2015）](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)：SHA-1 和 SHA-2。
