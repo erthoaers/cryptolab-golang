@@ -4,6 +4,7 @@ package rsa
 
 import (
 	"crypto"
+	"crypto/subtle"
 	"hash"
 	"io"
 )
@@ -108,12 +109,114 @@ func SignPSS(random io.Reader, priv *PrivateKey, hashID crypto.Hash, digest []by
 	return I2OSP(s, priv.Size())
 }
 
+func emsaPSSVerify(
+	h hash.Hash,
+	digest, em []byte,
+	emBits, saltLength int,
+) error {
+	emLen := (emBits + 7) / 8
+	if emBits <= 0 ||
+		len(digest) != h.Size() ||
+		len(em) != emLen ||
+		emLen < h.Size()+2 ||
+		em[emLen-1] != 0xbc {
+		return ErrVerification
+	}
+
+	dbLen := emLen - h.Size() - 1
+	maskedDB := make([]byte, dbLen)
+	copy(maskedDB, em[:dbLen])
+	hHash := em[dbLen : emLen-1]
+
+	keepMask := byte(0xff) >> (8*emLen - emBits)
+	if maskedDB[0]&^keepMask != 0 {
+		return ErrVerification
+	}
+	dbMask, err := mgf1(h, hHash, dbLen)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < dbLen; i++ {
+		maskedDB[i] ^= dbMask[i]
+	}
+
+	maskedDB[0] &= keepMask
+	// Scan the data block for the delimiter (0x01) and check for invalid bytes (anything other than 0x00 or 0x01) before the delimiter.
+
+	delimiterIndex := 0
+	valid := 0
+
+	for i := 0; i < len(maskedDB); i++ {
+		if maskedDB[i] != 0 && maskedDB[i] != 1 {
+			return ErrVerification
+		}
+		if maskedDB[i] == 1 {
+			delimiterIndex = i
+			valid = 1
+			break
+		}
+	}
+	if valid == 0 {
+		return ErrVerification
+	}
+
+	salt := maskedDB[delimiterIndex+1:]
+	if saltLength != 0 && len(salt) != saltLength {
+		return ErrVerification
+	}
+
+	mPrime := make([]byte, 8+h.Size()+len(salt))
+	copy(mPrime[8:8+h.Size()], digest)
+	copy(mPrime[8+h.Size():], salt)
+	h.Reset()
+	h.Write(mPrime)
+	hSum := h.Sum(nil)
+
+	if subtle.ConstantTimeCompare(hSum, hHash) != 1 {
+		return ErrVerification
+	}
+	return nil
+}
+
 // VerifyPSS verifies digest and sig (RFC 8017 sections 8.1.2 and 9.1.2).
 // Like crypto/rsa, hashID selects the hash here; opts.Hash is ignored.
 // Auto detects salt length; EqualsHash and positive lengths enforce a length.
 // Invalid signatures return ErrVerification. Preserve every input.
 func VerifyPSS(pub *PublicKey, hashID crypto.Hash, digest, sig []byte, opts *PSSOptions) error {
-	panic(todo("TODO RSA-08: implement RSASSA-PSS verification; RFC 8017 sections 8.1.2 and 9.1.2"))
+	h, err := newHash(hashID)
+	if err != nil {
+		return err
+	}
+	emBits := pub.N.BitLen() - 1
+	emLen := (emBits + 7) / 8
+
+	if len(sig) != pub.Size() {
+		return ErrVerification
+	}
+	m, err := RSAVP1(pub, OS2IP(sig))
+	if err != nil {
+		return ErrVerification
+	}
+	em, err := I2OSP(m, emLen)
+	if err != nil {
+		return ErrVerification
+	}
+
+	sLen := PSSSaltLengthAuto
+	if opts != nil {
+		sLen = opts.SaltLength
+	}
+	switch sLen {
+	case PSSSaltLengthAuto:
+		sLen = 0
+	case PSSSaltLengthEqualsHash:
+		sLen = h.Size()
+	}
+	if sLen < 0 {
+		return ErrInvalidOptions
+	}
+
+	return emsaPSSVerify(h, digest, em, emBits, sLen)
 }
 
 // SignPKCS1v15 signs a digest with EMSA-PKCS1-v1_5 (RFC 8017 8.2.1 and 9.2).
