@@ -9,6 +9,16 @@ import (
 	"io"
 )
 
+var digestInfoPrefixes = map[crypto.Hash][]byte{
+	crypto.SHA1:       {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14},
+	crypto.SHA224:     {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05, 0x00, 0x04, 0x1c},
+	crypto.SHA256:     {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20},
+	crypto.SHA384:     {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30},
+	crypto.SHA512:     {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
+	crypto.SHA512_224: {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x05, 0x05, 0x00, 0x04, 0x1c},
+	crypto.SHA512_256: {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x06, 0x05, 0x00, 0x04, 0x20},
+}
+
 func emsaPSSEncode(
 	h hash.Hash,
 	digest, salt []byte,
@@ -219,12 +229,58 @@ func VerifyPSS(pub *PublicKey, hashID crypto.Hash, digest, sig []byte, opts *PSS
 	return emsaPSSVerify(h, digest, em, emBits, sLen)
 }
 
+func emsaPKCS1v15Encode(
+	hash crypto.Hash,
+	digest []byte,
+	emLen int,
+) ([]byte, error) {
+	var digestInfoPrefix []byte
+	if hash != 0 {
+		if prefix, ok := digestInfoPrefixes[hash]; ok {
+			digestInfoPrefix = prefix
+		} else {
+			return nil, ErrUnsupportedHash
+		}
+		h, err := newHash(hash)
+		if err != nil {
+			return nil, err
+		}
+		if len(digest) != h.Size() {
+			return nil, ErrInvalidOptions
+		}
+	}
+	tLen := len(digestInfoPrefix) + len(digest)
+	if emLen < 11 || emLen < tLen+11 {
+		return nil, ErrMessageTooLong
+	}
+	em := make([]byte, emLen)
+	copy(em[len(em)-len(digest):], digest)
+	copy(em[len(em)-tLen:len(em)-len(digest)], digestInfoPrefix)
+	em[0] = 0
+	em[1] = 1
+	for i := 2; i < emLen-tLen-1; i++ {
+		em[i] = 0xff
+	}
+	em[emLen-tLen-1] = 0
+	return em, nil
+}
+
 // SignPKCS1v15 signs a digest with EMSA-PKCS1-v1_5 (RFC 8017 8.2.1 and 9.2).
 // hashID=0 signs the supplied bytes without a DigestInfo prefix, matching the
 // standard API's legacy behavior. Otherwise check the digest length and DER
 // prefix. This scheme is deterministic; random is retained for API parity.
 func SignPKCS1v15(random io.Reader, priv *PrivateKey, hashID crypto.Hash, digest []byte) ([]byte, error) {
-	panic(todo("TODO RSA-09: implement PKCS1-v1_5 signing; RFC 8017 sections 8.2.1 and 9.2"))
+	emLen := priv.Size()
+	em, err := emsaPKCS1v15Encode(hashID, digest, emLen)
+	if err != nil {
+		return nil, err
+	}
+	m := OS2IP(em)
+	s, err := RSASP1(priv, m)
+	if err != nil {
+		return nil, err
+	}
+	return I2OSP(s, emLen)
 }
 
 // VerifyPKCS1v15 checks the complete encoding, not only its digest suffix.
