@@ -312,20 +312,34 @@ func EncryptPKCS1v15(random io.Reader, pub *PublicKey, msg []byte) ([]byte, erro
 // DecryptPKCS1v15 returns ErrDecryption for malformed encoding (RFC 8017 7.2.2).
 // Ordinary error-returning v1.5 decryption is not a session-key protocol.
 func DecryptPKCS1v15(random io.Reader, priv *PrivateKey, ciphertext []byte) ([]byte, error) {
+	valid, em, index, err := decryptPKCS1v15(priv, ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	if valid == 0 {
+		return nil, ErrDecryption
+	}
+	return em[index:], nil
+}
+
+func decryptPKCS1v15(
+	priv *PrivateKey,
+	ciphertext []byte,
+) (valid int, em []byte, index int, err error) {
 	k := priv.Size()
 	if len(ciphertext) != k || k < 11 {
-		return nil, ErrDecryption
+		return 0, nil, 0, ErrDecryption
 	}
 	m, err := RSASP1(priv, OS2IP(ciphertext))
 	if err != nil {
-		return nil, ErrDecryption
+		return 0, nil, 0, ErrDecryption
 	}
 
-	em, err := I2OSP(m, k)
+	em, err = I2OSP(m, k)
 	if err != nil {
-		return nil, ErrDecryption
+		return 0, nil, 0, ErrDecryption
 	}
-	valid := subtle.ConstantTimeByteEq(em[0], 0) &
+	valid = subtle.ConstantTimeByteEq(em[0], 0) &
 		subtle.ConstantTimeByteEq(em[1], 2)
 
 	looking := 1
@@ -343,10 +357,8 @@ func DecryptPKCS1v15(random io.Reader, priv *PrivateKey, ciphertext []byte) ([]b
 	valid &= (1 ^ looking) &
 		subtle.ConstantTimeLessOrEq(10, delimiterIndex)
 
-	if valid != 1 {
-		return nil, ErrDecryption
-	}
-	return em[delimiterIndex+1:], nil
+	index = subtle.ConstantTimeSelect(valid, delimiterIndex+1, 0)
+	return valid, em, index, nil
 }
 
 // DecryptPKCS1v15SessionKey preserves a pre-randomized key on invalid padding
