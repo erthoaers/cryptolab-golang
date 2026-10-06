@@ -286,5 +286,23 @@ func SignPKCS1v15(random io.Reader, priv *PrivateKey, hashID crypto.Hash, digest
 // VerifyPKCS1v15 checks the complete encoding, not only its digest suffix.
 // hashID=0 has the same raw-byte meaning as SignPKCS1v15. Preserve inputs.
 func VerifyPKCS1v15(pub *PublicKey, hashID crypto.Hash, digest, sig []byte) error {
-	panic(todo("TODO RSA-09: implement PKCS1-v1_5 verification; RFC 8017 sections 8.2.2 and 9.2"))
+	if len(sig) != pub.Size() {
+		return ErrVerification
+	}
+	m, err := RSAVP1(pub, OS2IP(sig))
+	if err != nil {
+		return ErrVerification
+	}
+	em, err := I2OSP(m, pub.Size())
+	if err != nil {
+		return ErrVerification
+	}
+	emExpected, err := emsaPKCS1v15Encode(hashID, digest, pub.Size())
+	if err != nil {
+		return err
+	}
+	if subtle.ConstantTimeCompare(em, emExpected) != 1 {
+		return ErrVerification
+	}
+	return nil
 }
