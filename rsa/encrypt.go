@@ -273,7 +273,40 @@ func decryptOAEP(
 // Use nonzero random padding bytes and enforce len(msg)<=k-11. Prefer OAEP in
 // new uses. Input buffers and key material must remain unchanged.
 func EncryptPKCS1v15(random io.Reader, pub *PublicKey, msg []byte) ([]byte, error) {
-	panic(todo("TODO RSA-09: implement PKCS1-v1_5 encryption; RFC 8017 section 7.2.1"))
+	k := pub.Size()
+	if len(msg) > k-11 {
+		return nil, ErrMessageTooLong
+	}
+
+	// Allocate the output buffer.
+	enc := make([]byte, k)
+	// Set the first two bytes as per PKCS1 v1.5.
+	enc[0] = 0
+	enc[1] = 2
+
+	// Fill the padding bytes with nonzero random values.
+	paddingLen := k - len(msg) - 3
+	padding := enc[2 : 2+paddingLen]
+	for i := 0; i < paddingLen; i++ {
+		var b [1]byte
+		for b[0] == 0 {
+			if _, err := io.ReadFull(random, b[:]); err != nil {
+				return nil, err
+			}
+		}
+		padding[i] = b[0]
+	}
+
+	// Copy the message after the padding and delimiter.
+	enc[2+paddingLen] = 0
+	copy(enc[3+paddingLen:], msg)
+
+	// Perform the RSA encryption primitive.
+	c, err := RSAEP(pub, OS2IP(enc))
+	if err != nil {
+		return nil, err
+	}
+	return I2OSP(c, k)
 }
 
 // DecryptPKCS1v15 returns ErrDecryption for malformed encoding (RFC 8017 7.2.2).
