@@ -312,7 +312,41 @@ func EncryptPKCS1v15(random io.Reader, pub *PublicKey, msg []byte) ([]byte, erro
 // DecryptPKCS1v15 returns ErrDecryption for malformed encoding (RFC 8017 7.2.2).
 // Ordinary error-returning v1.5 decryption is not a session-key protocol.
 func DecryptPKCS1v15(random io.Reader, priv *PrivateKey, ciphertext []byte) ([]byte, error) {
-	panic(todo("TODO RSA-09: implement PKCS1-v1_5 decryption; RFC 8017 section 7.2.2"))
+	k := priv.Size()
+	if len(ciphertext) != k || k < 11 {
+		return nil, ErrDecryption
+	}
+	m, err := RSASP1(priv, OS2IP(ciphertext))
+	if err != nil {
+		return nil, ErrDecryption
+	}
+
+	em, err := I2OSP(m, k)
+	if err != nil {
+		return nil, ErrDecryption
+	}
+	valid := subtle.ConstantTimeByteEq(em[0], 0) &
+		subtle.ConstantTimeByteEq(em[1], 2)
+
+	looking := 1
+	delimiterIndex := 0
+
+	for i := 2; i < len(em); i++ {
+		isZero := subtle.ConstantTimeByteEq(em[i], 0)
+
+		delimiterIndex = subtle.ConstantTimeSelect(
+			looking&isZero, i, delimiterIndex,
+		)
+		looking &= 1 ^ isZero
+	}
+
+	valid &= (1 ^ looking) &
+		subtle.ConstantTimeLessOrEq(10, delimiterIndex)
+
+	if valid != 1 {
+		return nil, ErrDecryption
+	}
+	return em[delimiterIndex+1:], nil
 }
 
 // DecryptPKCS1v15SessionKey preserves a pre-randomized key on invalid padding
