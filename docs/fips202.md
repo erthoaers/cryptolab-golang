@@ -1,10 +1,50 @@
 # FIPS 202：从 Keccak 置换到 SHA-3 / SHAKE
 
-本练习先实现 `sha3` 包内共用的 [Keccak 核心](../sha3/keccak.go)，再测试 [`sha3` 包](../sha3/sha3.go)中的六种算法。10 个核心函数保留 TODO，六个公开入口已设置各自的 rate、域后缀和输出长度。
+本练习按 SHA-2 的方式组织流式接口：四种 SHA-3 实现 `hash.Hash`，两种 SHAKE 实现 `hash.XOF`，六个一次性 `Sum…` 入口复用流式接口。构造、参数检查、元数据、`Reset` 和包装已接好；9 个底层步骤，以及流式吸收、持续挤出、摘要快照共 **12 个算法 TODO** 留给你完成。
 
 依据 **FIPS 202**（2015-08），见 [NIST 发布页](https://csrc.nist.gov/pubs/fips/202/final)和[官方 PDF](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf)。阅读时按此版本核对章节；勘误和后续修订信息以发布页为准。
 
-## 本阶段的接口
+## 文件与标准接口
+
+| 文件 | 职责 |
+| --- | --- |
+| [sha3.go](../sha3/sha3.go) | `digest`、四个 `New…`、`hash.Hash` 方法与定长 `Sum…` |
+| [shake.go](../sha3/shake.go) | `shake`、两个 `NewSHAKE…`、`hash.XOF` 方法与 `SumSHAKE…` |
+| [sponge.go](../sha3/sponge.go) | 两类接口共用的海绵状态、分段吸收与持续挤出 |
+| [keccak.go](../sha3/keccak.go) | lane 编解码、五步变换、置换、尾块填充 |
+| [hash_test.go](../sha3/hash_test.go)、[xof_test.go](../sha3/xof_test.go) | 流式接口的行为与边界测试 |
+| 原有 `*_test.go`、`testdata/` | 保留底层步骤、六种一次性入口、官方向量与中间状态测试 |
+
+本项目的构造函数与 SHA-2 一样，直接返回标准接口。接口契约依据本机 Go 1.27.1 的 [hash.Hash](https://pkg.go.dev/hash#Hash)、[hash.XOF](https://pkg.go.dev/hash#XOF)及 [crypto/sha3](https://pkg.go.dev/crypto/sha3)。`crypto.Hash` 是算法标识类型；这里需要实现的方法定义在 `hash` 包。
+
+| 类别 | 构造入口 | 方法 |
+| --- | --- | --- |
+| 固定摘要 | `New224/256/384/512() hash.Hash` | `Write`、`Sum`、`Reset`、`Size`、`BlockSize` |
+| 可扩展输出 | `NewSHAKE128/256() hash.XOF` | `Write`、`Read`、`Reset`、`BlockSize` |
+
+下面是算法完成后的调用方式；当前执行 `Write`、`Read` 或 `Sum` 会遇到对应练习 TODO。
+
+```go
+h := sha3.New256()
+h.Write([]byte("ab"))
+first := h.Sum(nil) // "ab" 的摘要；保留原状态
+h.Write([]byte("c"))
+second := h.Sum(nil) // "abc" 的摘要
+_, _ = first, second
+
+x := sha3.NewSHAKE128()
+x.Write([]byte("abc"))
+a, b := make([]byte, 32), make([]byte, 64)
+x.Read(a)
+x.Read(b) // 接着取第 33–96 字节
+x.Reset() // 之后可以重新 Write
+```
+
+`hash.Hash.Sum(b)` 在 b 后追加摘要，保留前缀和原始状态；调用之后仍可继续写入。`hash.XOF.Read(p)` 消耗输出流，每次接着上一次的位置读。两种 SHAKE 读取时填满 p 并返回 `len(p), nil`，不会耗尽而返回 EOF。
+
+SHAKE 第一次 `Read` 进入挤出阶段，之后任何 `Write`（包括空写入）都必须 panic；`Reset` 才恢复吸收阶段。零长度 `Read(nil)` 也切换阶段，这与本机 Go 1.27.1 的 `crypto/sha3` 行为一致，已有专门测试。空 `Write` 在吸收阶段返回 `0, nil`。
+
+## 六种配置
 
 输入与输出按整字节处理，全部采用 `Keccak-p[1600,24]`。四种 SHA-3 返回定长数组；SHAKE 的 `outputLen` 单位是**字节**，允许为 0，负数要求 panic。
 
@@ -21,7 +61,7 @@
 
 依据 §6.1–6.2，所有配置满足 `8*rate + capacity = 1600`。SHAKE128 / SHAKE256 名称中的数字不规定输出长度。SHA3-256 与旧 Keccak-256 的域后缀不同，不能用旧 Keccak 的摘要当作 SHA3-256 答案。
 
-本阶段只有一次性 `Sum`，尚无 `hash.Hash`、流式 `Write/Read` 或状态序列化接口。非整字节消息/输出、其他宽度或轮数的 Keccak-p、RawSHAKE 入口、SP 800-185 的 cSHAKE/KMAC 以及 Rust 版留待后续；因此本练习只覆盖 FIPS 202 的整字节子集。
+本阶段覆盖字节级一次性与流式接口。`hash.Cloner`、二进制状态序列化、非整字节消息/输出、其他宽度或轮数的 Keccak-p、RawSHAKE 入口、SP 800-185 的 cSHAKE/KMAC 以及 Rust 版留待后续。当前公开类型是接口，具体状态类型保留在包内。
 
 ## 先建立数据表示
 
@@ -43,7 +83,7 @@ flowchart LR
 
 图中吸收循环每次消费一个输入块；全部输入块完成后才进入输出阶段。capacity 区域参与置换，但不直接接收消息异或，也不直接输出。输入恰好占满 rate 时，还需要一个独立的填充块。
 
-## 五步练习
+## 七步练习
 
 以下命令均在 `cryptolab-golang/` 执行。测试恢复带类型的 TODO panic，并将它记为失败；不会跳过未实现步骤。
 
@@ -94,21 +134,48 @@ go test ./sha3 -run '^TestPermute$' -count=1 -v
 go test ./sha3 -run '^TestPadTail$' -count=1 -v
 ```
 
-覆盖五种 rate、两种后缀、空尾部，以及剩余 1/2/3 字节的情况。`padTail` 的参数由内部调用者保证合法；包内共享函数 `sponge` 负责拒绝非法参数。
+覆盖五种 rate、两种后缀、空尾部，以及剩余 1/2/3 字节的情况。`padTail` 的参数由内部调用者保证合法；`newSponge` 已检查 rate 与后缀，一次性包装已检查负输出长度。
 
-### K-05：吸收与挤出
+### K-05：流式吸收与 Write
 
-实现 `sponge`，阅读 §4 Algorithm 8、§5.2、§6。先处理输入完整块，再处理填充尾块。每次仅将 rate 区域与输入块异或，随后调用置换。输出超过一个 rate 时，需要继续置换并取出下一个 rate，直到满足长度。
+实现 [spongeState.write](../sha3/sponge.go)，阅读 §4 Algorithm 8 的吸收部分。`digest.Write` 和 `shake.Write` 都委托给它：接受任意长度的分段输入，处理完整 rate 块，复制并保留不足一块的尾部。只更新 rate 区域的输入异或，capacity 区域仍参与置换。
 
-不要复制整个消息来追加填充；用固定状态和一个尾块即可。对输入、输入备用容量、跨调用状态和返回切片所有权的测试都已准备。
+状态里的 `lanes` 保存 25 条通道；吸收时 `buffer[:offset]` 保存尚未吸收的尾部。`rate` 与 `suffix` 由构造函数设置，`squeezing` 标记当前阶段。结构只含数组与标量，复制整个结构时没有共享的切片底层存储。
+
+成功写入必须返回 `len(p), nil`，不得修改或保留调用方输入；进入挤出阶段后，即使 p 为空也拒绝写入。保持固定大小状态与尾块，不要保存整条消息。
 
 ```sh
-go test ./sha3 -run '^TestSponge' -count=1 -v
-go test ./sha3 -run '^TestSum256' -count=1 -v
+go test ./sha3 -run '^Test(Hash|XOF)WriteContract$' -count=1 -v
+```
+
+这组测试先核对写入计数和输入不被修改；吸收结果是否正确，需要完成 K-06 后运行 XOF 向量与边界测试。
+
+### K-06：收尾与持续 Read
+
+实现 [spongeState.read](../sha3/sponge.go)，阅读 §4 Algorithm 8 的挤出部分、§5.1、§6.2 和附录 A.2。第一次读先按域后缀和 `pad10*1` 收尾并完成置换；即使之前输入恰好是 rate 的整数倍，仍有额外填充块。后续读继续挤出，不再填充。
+
+挤出时 `buffer[offset:rate]` 表示当前块尚未读取的字节。读取跨越 rate 边界时继续置换，新的输出必须与一次性 SHAKE 输出拼接一致。`Read(nil)` 进入挤出阶段但不消费输出字节；重复空读也不消费字节。所有合法读取填满输出切片，只写入该切片长度范围。
+
+```sh
+go test ./sha3 -run '^TestXOF' -count=1 -v
+go test ./sha3 -run '^Test(Sponge|SumSHAKE)' -count=1 -v
+```
+
+`Reset` 已接好：清空状态、尾块、偏移和阶段，保留算法配置。测试覆盖吸收途中、空读之后、部分输出和跨块输出后的复用。
+
+### K-07：Hash.Sum 的独立快照
+
+实现 [digest.Sum](../sha3/sha3.go)，与 SHA-2 中复制 digest 后调用 `checkSum` 的思路一致。复制当前海绵状态，在副本上收尾并取出该变体的 `size` 字节，再追加到 b；原对象仍处于吸收阶段，可以继续 `Write`。
+
+注意返回切片要保留 b 的前缀，既要处理容量足够，也要处理追加时重新分配的情况。改变返回的摘要内容，不得影响原状态或后续 `Sum`。空消息的 `Sum` 同样不能让原对象进入挤出阶段。
+
+```sh
+go test ./sha3 -run '^TestHash' -count=1 -v
+go test ./sha3 -run '^TestSum(224|256|384|512)' -count=1 -v
 go test ./sha3 -count=1
 ```
 
-先通过 SHA3-256，再检查其余配置。SHAKE 测试包含输出长度 0、rate−1、rate、rate+1、2×rate+1，并检查同一消息的短输出是长输出的前缀。
+一次性 `Sum224/256/384/512` 通过 `New… → Write → Sum` 完成；`SumSHAKE128/256` 通过 `NewSHAKE… → Write → Read` 完成。原 `TestSponge` 的调用入口现在也是同一流式状态的包装，不需要另写第二套吸收和挤出算法。
 
 ## 向量与验收边界
 
@@ -130,4 +197,6 @@ go vet ./sha3
 
 `Test.*VectorFixtures` 检查仓库内 JSON 的结构和固定摘要；它不运行核心算法，也不逐项核对原始 PDF 中的所有中间状态。`TestTheta` 至 `TestIota` 则将每一步实现的结果与 JSON 中的官方中间状态比较。核查转录时，应直接对照上述 NIST 示例 PDF。
 
-完成本阶段后，再增加 SHA-3 的 `hash.Hash` 接口和 SHAKE 的持续输出接口，专门测试分段写入、分段读取、`Sum` 不改变状态，以及开始挤出后的写入策略。
+新增流式测试仍使用相同的 73 组固定答案，并用 Go 标准库核对分段输入、连续输出、`Sum` 前缀/状态、`Reset`、实例独立性、内存所有权，以及 `io.Copy`、`io.LimitReader`、`io.ReadFull` 的组合行为。读写阶段错误单独测试，TODO panic 不能算作正确拒绝。
+
+只检查接口构造与元数据，可运行 `go test ./sha3 -run '^Test(Hash|XOF)Metadata$' -count=1`；通过并不代表算法完成。全部 12 个 TODO 完成后，以未过滤的 `go test ./sha3 -count=1` 为本阶段算法验收入口。

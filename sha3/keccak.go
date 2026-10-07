@@ -55,13 +55,3 @@ func permute(a *state) {
 func padTail(tail []byte, rate int, suffix byte) []byte {
 	panic(todo("TODO K-04: byte-aligned domain suffix and pad10*1; FIPS 202 sections 5.1, B.2"))
 }
-
-// sponge absorbs data into a zero state and squeezes outputLen bytes into
-// newly owned storage. rate is in BYTES, not bits. Allowed rates are
-// 72,104,136,144,168; allowed suffixes are 0x06 and 0x1f.
-// Panic on unsupported rates/suffixes or negative outputLen. Zero output
-// length is valid. Do not modify or retain data. Bound auxiliary storage
-// independently of message length (apart from the returned output).
-func sponge(data []byte, rate int, suffix byte, outputLen int) []byte {
-	panic(todo("TODO K-05: absorb full blocks, pad the tail, squeeze; FIPS 202 sections 4-6"))
-}

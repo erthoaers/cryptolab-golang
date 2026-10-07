@@ -12,7 +12,7 @@ An educational Go library for implementing cryptographic algorithms from publish
 | `aes` | AES-128, AES-192, and AES-256 | Implements `cipher.Block` | [AES](docs/aes.md) |
 | `rsa` | PKCS #1 primitives, key validation, MGF1, encryption, and signatures | Primitives, key validation, MGF1, OAEP, and PSS implemented; key generation and PKCS #1 v1.5 schemes remain exercises | [RSA](docs/rsa.md) |
 | `ed25519` | Pure Ed25519 from RFC 8032 | Step-by-step exercises; implementation pending | [Ed25519](docs/ed25519.md) |
-| `sha3` | Four SHA-3 variants, SHAKE128, and SHAKE256 | Step-by-step exercises; implementation pending | [FIPS 202](docs/fips202.md) |
+| `sha3` | Four SHA-3 hashes (`hash.Hash`) and two SHAKE XOFs (`hash.XOF`) | Streaming interface scaffold; algorithms remain exercises | [FIPS 202](docs/fips202.md) |
 
 SHA-224 and SHA-256 share the `sha256` package. The SHA-512 family shares the `sha512` package. SHA-3 and SHAKE share a Keccak core in the `sha3` package.
 
@@ -33,7 +33,7 @@ func main() {
 }
 ```
 
-The SHA packages provide one-shot digest functions and `New` constructors for streaming input. For AES, `NewCipher` creates a block cipher, and each `Encrypt` or `Decrypt` call processes 16 bytes. In-place operation is supported; short buffers or partial overlap between the first source and destination blocks cause a panic.
+The SHA packages provide one-shot digest functions and `New` constructors for streaming input. In `sha3`, `New224/256/384/512` return `hash.Hash`, and `NewSHAKE128/256` return `hash.XOF`. The one-shot functions reuse these streaming interfaces; the SHA-3/SHAKE algorithms remain TODO exercises. For AES, `NewCipher` creates a block cipher, and each `Encrypt` or `Decrypt` call processes 16 bytes. In-place operation is supported; short buffers or partial overlap between the first source and destination blocks cause a panic.
 
 ## Testing
 
