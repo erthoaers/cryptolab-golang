@@ -387,5 +387,14 @@ func DecryptPKCS1v15SessionKey(random io.Reader, priv *PrivateKey, ciphertext, k
 // DecryptPKCS1v15SessionKey. On malformed padding it returns that fallback.
 // Propagate random-source errors before attempting decryption.
 func decryptSessionKey(random io.Reader, priv *PrivateKey, ciphertext []byte, length int) ([]byte, error) {
-	panic(todo("TODO RSA-09: implement randomized session-key fallback; Go Decrypter contract"))
+	key := make([]byte, length)
+	_, err := io.ReadFull(random, key)
+	if err != nil {
+		return nil, err
+	}
+	err = DecryptPKCS1v15SessionKey(random, priv, ciphertext, key)
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
 }
