@@ -367,7 +367,20 @@ func decryptPKCS1v15(
 // recovered key into key. Study RFC 8017 7.2.2 notes and Go's API contract;
 // no padding-validity branch may be exposed to the caller.
 func DecryptPKCS1v15SessionKey(random io.Reader, priv *PrivateKey, ciphertext, key []byte) error {
-	panic(todo("TODO RSA-09: implement session-key decoding; RFC 8017 section 7.2.2 and Go API contract"))
+	k := priv.Size()
+	if k < 11 || len(key) > k-11 {
+		return ErrDecryption
+	}
+	valid, em, index, err := decryptPKCS1v15(priv, ciphertext)
+	if err != nil {
+		return err
+	}
+	valid &= subtle.ConstantTimeEq(
+		int32(len(em)-index),
+		int32(len(key)),
+	)
+	subtle.ConstantTimeCopy(valid, key, em[len(em)-len(key):])
+	return nil
 }
 
 // decryptSessionKey first fills a fresh buffer from random, then calls
