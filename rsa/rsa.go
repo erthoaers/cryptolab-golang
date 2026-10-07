@@ -106,7 +106,47 @@ func NewPrivateKey(p, q *big.Int, e int) (*PrivateKey, error) {
 // Study FIPS 186-5 Appendix A.1 and SP 800-56B Rev. 2 section 6 before filling
 // this TODO. The presence of this API does not claim a FIPS-approved generator.
 func GenerateKey(random io.Reader, bits int) (*PrivateKey, error) {
-	panic(todo("TODO RSA-10: generate and validate a two-prime key; FIPS 186-5 Appendix A.1"))
+	if bits < 1024 {
+		return nil, ErrInvalidKey
+	}
+	const e = 65537
+	pBits := bits / 2
+	qBits := bits - pBits
+	p, q := new(big.Int), new(big.Int)
+	var err error
+	for p.Cmp(q) == 0 || new(big.Int).Mul(p, q).BitLen() != bits {
+		p, err = generatePrime(random, pBits, e)
+		if err != nil {
+			return nil, err
+		}
+		q, err = generatePrime(random, qBits, e)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return NewPrivateKey(p, q, e)
+}
+
+func generatePrime(random io.Reader, primeBits, e int) (*big.Int, error) {
+	byteLen := (primeBits + 7) / 8
+	excess := 8*byteLen - primeBits
+
+	buf := make([]byte, byteLen)
+	for {
+		if _, err := io.ReadFull(random, buf); err != nil {
+			return nil, err
+		}
+		buf[0] &= byte(0xff >> excess)
+		buf[0] |= byte(1 << (7 - excess))
+		buf[len(buf)-1] |= 1
+
+		candidate := new(big.Int).SetBytes(buf)
+		gcd := new(big.Int).GCD(nil, nil, new(big.Int).Sub(candidate, big.NewInt(1)), big.NewInt(int64(e)))
+		if gcd.Cmp(big.NewInt(1)) == 0 && candidate.ProbablyPrime(32) {
+			return candidate, nil
+		}
+	}
 }
 
 // Public returns the embedded public key, as crypto/rsa.PrivateKey.Public does.
