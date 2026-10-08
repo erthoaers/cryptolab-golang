@@ -1,6 +1,7 @@
 // Package rsa is a two-prime RSA learning scaffold following RFC 8017
 // (PKCS #1 v2.2, November 2016), with Go crypto.Signer and crypto.Decrypter
-// adapters. Encryption, signature schemes, and key generation remain TODO exercises.
+// adapters. OAEP, PSS, PKCS #1 v1.5, and random key generation are implemented.
+// Private-operation blinding remains a separate exercise.
 // This math/big-based project is not a constant-time or production library.
 package rsa
 
@@ -98,13 +99,13 @@ func NewPrivateKey(p, q *big.Int, e int) (*PrivateKey, error) {
 	return priv, nil
 }
 
-// GenerateKey is the planned random two-prime key-generation entry point.
+// GenerateKey generates a random two-prime key for this learning implementation.
 // The learning contract uses random (normally crypto/rand.Reader), e=65537,
 // and rejects bits < 1024. It must return an exactly bits-wide modulus and
 // propagate reader errors. Go 1.27 normally ignores its reader argument;
 // that global randomness policy is intentionally not reproduced here.
-// Study FIPS 186-5 Appendix A.1 and SP 800-56B Rev. 2 section 6 before filling
-// this TODO. The presence of this API does not claim a FIPS-approved generator.
+// FIPS 186-5 Appendix A.1 and SP 800-56B Rev. 2 section 6 impose additional
+// requirements; this implementation does not claim FIPS conformance.
 func GenerateKey(random io.Reader, bits int) (*PrivateKey, error) {
 	if bits < 1024 {
 		return nil, ErrInvalidKey
