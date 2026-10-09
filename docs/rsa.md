@@ -1,6 +1,6 @@
 # RSA：对接 Go 的公钥密码接口
 
-本包按 **RFC 8017 / PKCS #1 v2.2**（2016-11）实现两素数 RSA，使用 **Go 1.27.1 的 `crypto.Signer` 和 `crypto.Decrypter`** 作为外部接口。整数转换、密钥构造与验证、CRT 预计算、整数原语、哈希选择、MGF1、OAEP、PSS、PKCS#1 v1.5、会话密钥回退、随机密钥生成和盲化因子采样已有实现。当前提供盲化私钥运算包装函数的 TODO 与测试；接入解密和签名是下一阶段。
+本包按 **RFC 8017 / PKCS #1 v2.2**（2016-11）实现两素数 RSA，使用 **Go 1.27.1 的 `crypto.Signer` 和 `crypto.Decrypter`** 作为外部接口。整数转换、密钥构造与验证、CRT 预计算、整数原语、哈希选择、MGF1、OAEP、PSS、PKCS#1 v1.5、会话密钥回退、随机密钥生成、盲化因子采样和盲化私钥运算已有实现。接入解密和签名是下一阶段。
 
 私钥通过标准接口提供签名、解密方法；加密和验签使用包级函数。学习顺序从整数表示开始，再连接编码方案和 Go 接口。
 
@@ -40,7 +40,7 @@ RSA 的 `Sign` 接收**已经计算好的摘要**。调用者负责选择摘要�
 | [primitives.go](../rsa/primitives.go) | [primitives_test.go](../rsa/primitives_test.go) | `I2OSP`／`OS2IP`、五个 RSA 整数原语、哈希选择与 MGF1 |
 | [encrypt.go](../rsa/encrypt.go) | [encrypt_test.go](../rsa/encrypt_test.go) | OAEP 和 PKCS#1 v1.5 加解密；会话密钥解码 |
 | [sign.go](../rsa/sign.go) | [sign_test.go](../rsa/sign_test.go) | PSS 和 PKCS#1 v1.5 签名／验签；CSR 集成 |
-| [blinding.go](../rsa/blinding.go) | [blinding_test.go](../rsa/blinding_test.go) | 盲化因子采样已完成，私钥运算包装为当前练习；尚未接入签名或解密 |
+| [blinding.go](../rsa/blinding.go) | [blinding_test.go](../rsa/blinding_test.go) | 盲化因子采样和私钥运算包装已完成；尚未接入签名或解密 |
 
 [helpers_test.go](../rsa/helpers_test.go) 保存共享测试辅助函数及夹具来源说明；固定密钥保留在 `testdata/`。跨方案的接口、随机源契约和夹具自检放在 `rsa_test.go`。
 
@@ -87,7 +87,7 @@ n=pq,\qquad \lambda(n)=\operatorname{lcm}(p-1,q-1),\qquad ed\equiv1\pmod{\lambda
 
 ## 实现顺序
 
-RSA-00 至 RSA-11a 已有实现，可以按下表回顾并测试。当前练习 RSA-11b；RSA-11c 是后续步骤。下面命令均在仓库根目录运行。
+RSA-00 至 RSA-11b 已有实现，可以按下表回顾并测试。RSA-11c 是后续步骤。下面命令均在仓库根目录运行。
 
 | 步骤 | 实现内容 | 标准位置与验收入口 |
 | --- | --- | --- |
@@ -103,7 +103,7 @@ RSA-00 至 RSA-11a 已有实现，可以按下表回顾并测试。当前练习 
 | RSA-09 | PKCS#1 v1.5 及会话密钥处理 | §§7.2、8.2、9.2；`TestPKCS1v15*`、`TestSessionKeyFallback` |
 | RSA-10 | 随机生成密钥 | FIPS 186-5 附录 A.1、SP 800-56B Rev. 2 第 6 章；生成测试仅检查 API 和数学关系 |
 | RSA-11a | 采样盲化因子与逆元，已实现 | 本地采样契约；`TestBlindingFactor*` |
-| RSA-11b | 对私钥整数运算进行盲化与解盲，当前 TODO | RFC 8017 §§5.1.2、5.2.1 的运算等价性；`TestPrivateOpBlinded*` |
+| RSA-11b | 对私钥整数运算进行盲化与解盲，已实现 | RFC 8017 §§5.1.2、5.2.1 的运算等价性；`TestPrivateOpBlinded*` |
 | RSA-11c | 接入解密、签名和标准接口，后续步骤 | 保留编码及会话密钥回退语义；补充随机源错误和互操作测试 |
 
 回顾 [primitives.go](../rsa/primitives.go) 中的整数转换：
@@ -186,7 +186,7 @@ func randomBlindingFactor(random io.Reader, n *big.Int) (r, rInv *big.Int, err e
 | 3233 | 17 | 413 | 2790 | 2 | 1617 | 3017 | 130 | 65 |
 
 ```sh
-# 仅核对本地数学夹具，不代表 TODO 已完成。
+# 仅核对本地数学夹具，不代表算法验收。
 go test ./rsa -run '^TestBlindingVectorFixtures$' -count=1 -v
 
 # 已完成采样函数：范围拒绝、不可逆重试、字节边界、输入所有权和读取错误。
@@ -195,7 +195,7 @@ go test ./rsa -run '^TestBlindingFactor' -count=1 -timeout=10s -v
 
 ## RSA-11b：盲化私钥整数运算
 
-现在实现 [blinding.go](../rsa/blinding.go) 中的包装函数：
+RSA-11b 已完成，[blinding.go](../rsa/blinding.go) 中的包装函数为：
 
 ```go
 func privateOpBlinded(random io.Reader, key *PrivateKey, x *big.Int) (*big.Int, error)
@@ -205,7 +205,7 @@ func privateOpBlinded(random io.Reader, key *PrivateKey, x *big.Int) (*big.Int, 
 
 本层与原语一样，假定调用方提供有效且不再修改的密钥。盲化额外需要公钥指数 `E`；直接路径使用 `N,E,D`，CRT 路径使用 `N,E,Primes,Precomputed`，允许 `D=nil`。CRT 缓存不完整时，按已有 `RSASP1` 的规则回退到有效的 `D`。不要在这里通过调用完整 `Validate` 强制要求两种表示同时存在。
 
-按以下顺序实现：
+实现遵循以下顺序：
 
 1. **检查代表元**：`x == nil`、`x < 0` 或 `x >= key.N` 时返回 `nil, ErrRepresentativeOutOfRange`，且不读取随机源。不能先对非法输入取模。
 2. **采样**：调用已完成的 `randomBlindingFactor(random, key.N)`，取得 `r`、`rInv`。发生错误时返回 `nil, err`；不能在读取失败后改为不盲化运算。`random=nil` 由采样函数返回 `ErrInvalidOptions`。
@@ -227,13 +227,13 @@ y        = 2730 * 77 mod 3233   = 65
 更换合法盲化因子后，中间值可以不同，最终结果仍须为 `65`。直接路径与 CRT 路径也必须返回相同结果。
 
 ```sh
-# 当前练习：直接／CRT 路径、非互素输入、边界、读取错误和所有权。
+# 盲化私钥运算：直接／CRT 路径、非互素输入、边界、读取错误和所有权。
 go test ./rsa -run '^TestPrivateOpBlinded' -count=1 -timeout=30s -v
 ```
 
 测试包括 `D=nil` 的 CRT 表示、缺少 CRT 缓存时的直接表示、部分缓存回退，以及 2048／2049 位测试密钥。小整数用独立的重复乘法核对，大整数与 `math/big.Exp` 比较。结果等价及随机字节读取检查不能单独证明函数确实执行了每一步盲化，验收时还要审查实现。
 
-RSA-11b 通过后，RSA-11c 再接入 OAEP、PKCS#1 v1.5、PSS 和接口分派，明确各入口的随机源及错误契约，并调整需要更多随机字节的测试夹具。此时 `math/big` 仍没有恒定时间保证，不能把功能测试通过等同于侧信道安全验收。
+下一步 RSA-11c 接入 OAEP、PKCS#1 v1.5、PSS 和接口分派，明确各入口的随机源及错误契约，并调整需要更多随机字节的测试夹具。此时 `math/big` 仍没有恒定时间保证，不能把功能测试通过等同于侧信道安全验收。
 
 ## 调用方式
 
@@ -267,14 +267,14 @@ go test ./... -run '^$' -count=1
 # 已完成的元数据接口 + 测试数据检查
 go test ./rsa -run '^Test(.*VectorFixtures|PublicContract|PrivateEqual|InvalidInterfaceOptions)$' -count=1 -v
 
-# 完整 RSA 测试：包含当前盲化私钥运算 TODO，未实现时明确失败。
+# 完整 RSA 回归测试，包含盲化因子和盲化私钥运算。
 go test ./rsa -count=1 -v
 go vet ./rsa
 ```
 
 小整数、MGF1 固定答案与 2048／2049 位 PEM 均为自建测试资料，来源写在测试注释中，并非 NIST／RFC 官方向量。PEM 是公开的测试专用私钥。测试分别验证本实现到标准库、标准库到本实现，避免同一实现的正反错误相互抵消。
 
-RSA-00 至 RSA-11a 的回归测试与 RSA-11b 的 TODO 测试一起运行。新增练习的预期失败要单独报告，不能跳过它们来宣称完整 RSA 测试通过。数学夹具核对、可编译以及盲化功能通过，也都不代表盲化已经接入或具备恒定时间保证。
+RSA-00 至 RSA-11b 的回归测试一起运行；RSA-11c 尚未接入已有方案。后续新增练习的预期失败要单独报告，不能跳过它们来宣称完整 RSA 测试通过。数学夹具核对、可编译以及盲化功能通过，也都不代表盲化已经接入或具备恒定时间保证。
 
 此框架对齐常用 Go RSA API 的形状和选项语义，尚非整个 `crypto/rsa` 的替代品。当前限定两素数和已有 SHA-1／SHA-2；没有多素数生成、标准库内部 FIPS 模式或私钥序列化适配。教学随机 API 使用传入的 `io.Reader` 并传播错误，这与 Go 1.27 通常使用全局安全随机源的策略不同。`GenerateKey` 的 1024 位下限用于 API 练习，互操作测试使用 2048 位以上，不代表 NIST 参数合规。
 

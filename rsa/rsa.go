@@ -1,7 +1,7 @@
 // Package rsa is a two-prime RSA learning scaffold following RFC 8017
 // (PKCS #1 v2.2, November 2016), with Go crypto.Signer and crypto.Decrypter
 // adapters. OAEP, PSS, PKCS #1 v1.5, and random key generation are implemented.
-// Private-operation blinding remains a separate exercise.
+// Blinding helpers are implemented; scheme integration remains an exercise.
 // This math/big-based project is not a constant-time or production library.
 package rsa
 

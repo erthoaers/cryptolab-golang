@@ -65,5 +65,23 @@ func randomBlindingFactor(random io.Reader, n *big.Int) (r, rInv *big.Int, err e
 // mutable aliases to x or key fields. Every error returns a nil result.
 // This exercise is not yet connected to the encryption or signature schemes.
 func privateOpBlinded(random io.Reader, key *PrivateKey, x *big.Int) (*big.Int, error) {
-	panic(todo("TODO RSA-11b: blind a representative, apply the private operation, and unblind"))
+	if x == nil || x.Sign() < 0 || x.Cmp(key.N) >= 0 {
+		return nil, ErrRepresentativeOutOfRange
+	}
+
+	r, rInv, err := randomBlindingFactor(random, key.N)
+	if err != nil {
+		return nil, err
+	}
+
+	xBlinded := new(big.Int).Mul(x, new(big.Int).Exp(r, big.NewInt(int64(key.E)), key.N))
+	xBlinded.Mod(xBlinded, key.N)
+
+	result, err := RSASP1(key, xBlinded)
+	if err != nil {
+		return nil, err
+	}
+	result.Mul(result, rInv)
+	result.Mod(result, key.N)
+	return result, nil
 }
