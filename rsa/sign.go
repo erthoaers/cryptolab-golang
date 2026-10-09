@@ -69,6 +69,7 @@ func emsaPSSEncode(
 // lengths are exact. Reject other negative lengths and wrong digest lengths.
 // Use emBits=N.BitLen()-1, but return exactly PublicKey.Size() signature bytes.
 // Resolve the hash via newHash; do not modify key, digest or opts.
+// Read salt and then blinding entropy from random; propagate reader errors.
 func SignPSS(random io.Reader, priv *PrivateKey, hashID crypto.Hash, digest []byte, opts *PSSOptions) ([]byte, error) {
 	if opts != nil && opts.Hash != 0 {
 		hashID = opts.Hash
@@ -103,6 +104,9 @@ func SignPSS(random io.Reader, priv *PrivateKey, hashID crypto.Hash, digest []by
 		return nil, ErrInvalidOptions
 	}
 
+	if random == nil {
+		return nil, ErrInvalidOptions
+	}
 	salt := make([]byte, sLen)
 	if _, err := io.ReadFull(random, salt); err != nil {
 		return nil, err
@@ -112,7 +116,7 @@ func SignPSS(random io.Reader, priv *PrivateKey, hashID crypto.Hash, digest []by
 	if err != nil {
 		return nil, err
 	}
-	s, err := RSASP1(priv, OS2IP(em))
+	s, err := privateOpBlinded(random, priv, OS2IP(em))
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +272,8 @@ func emsaPKCS1v15Encode(
 // SignPKCS1v15 signs a digest with EMSA-PKCS1-v1_5 (RFC 8017 8.2.1 and 9.2).
 // hashID=0 signs the supplied bytes without a DigestInfo prefix, matching the
 // standard API's legacy behavior. Otherwise check the digest length and DER
-// prefix. This scheme is deterministic; random is retained for API parity.
+// prefix. The signature is deterministic; random supplies blinding entropy.
+// Propagate random-source errors instead of performing an unblinded operation.
 func SignPKCS1v15(random io.Reader, priv *PrivateKey, hashID crypto.Hash, digest []byte) ([]byte, error) {
 	emLen := priv.Size()
 	em, err := emsaPKCS1v15Encode(hashID, digest, emLen)
@@ -276,7 +281,7 @@ func SignPKCS1v15(random io.Reader, priv *PrivateKey, hashID crypto.Hash, digest
 		return nil, err
 	}
 	m := OS2IP(em)
-	s, err := RSASP1(priv, m)
+	s, err := privateOpBlinded(random, priv, m)
 	if err != nil {
 		return nil, err
 	}

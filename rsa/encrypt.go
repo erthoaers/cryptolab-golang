@@ -6,7 +6,6 @@ import (
 	"crypto/subtle"
 	"hash"
 	"io"
-	"math/big"
 )
 
 // EncryptOAEP encrypts msg using h for both OAEP and MGF1 (RFC 8017 7.1.1).
@@ -125,6 +124,7 @@ func encryptOAEP(
 // DecryptOAEP decrypts using h for both OAEP and MGF1 (RFC 8017 7.1.2).
 // Preserve ciphertext and label. Invalid length, range, label hash, padding
 // or delimiter must produce nil, ErrDecryption without exposing the cause.
+// Use random for blinding and propagate random-source errors.
 func DecryptOAEP(
 	h hash.Hash,
 	random io.Reader,
@@ -156,7 +156,7 @@ func decryptOAEPWithOptions(random io.Reader, priv *PrivateKey, ciphertext []byt
 
 func decryptOAEP(
 	h, mgfHash hash.Hash,
-	_ io.Reader,
+	random io.Reader,
 	priv *PrivateKey,
 	ciphertext, label []byte,
 ) ([]byte, error) {
@@ -177,31 +177,13 @@ func decryptOAEP(
 
 	// Convert the ciphertext to an integer representative and check its range.
 	c := OS2IP(ciphertext)
-	if c.Cmp(priv.N) > 0 {
+	if c.Cmp(priv.N) >= 0 {
 		return nil, ErrDecryption
 	}
-	var m *big.Int
-	var err error
-	useCRT := len(priv.Primes) == 2 &&
-		priv.Primes[0] != nil &&
-		priv.Primes[1] != nil &&
-		priv.Precomputed.Dp != nil &&
-		priv.Precomputed.Dq != nil &&
-		priv.Precomputed.Qinv != nil
-	// Perform the RSA decryption operation to obtain the message representative (m).
-	if useCRT {
-		// Use the Chinese Remainder Theorem (CRT) for faster decryption if precomputed values are available.
-		var err error
-		m, err = RSADPCRT(priv, c)
-		if err != nil {
-			return nil, ErrDecryption
-		}
-	} else {
-		// Fall back to standard RSA decryption.
-		m, err = RSADP(priv, c)
-		if err != nil {
-			return nil, ErrDecryption
-		}
+
+	m, err := privateOpBlinded(random, priv, c)
+	if err != nil {
+		return nil, err
 	}
 	// Convert the message representative (m) to an encoded message (EM) of length k using I2OSP.
 	em, err := I2OSP(m, k)
@@ -311,8 +293,9 @@ func EncryptPKCS1v15(random io.Reader, pub *PublicKey, msg []byte) ([]byte, erro
 
 // DecryptPKCS1v15 returns ErrDecryption for malformed encoding (RFC 8017 7.2.2).
 // Ordinary error-returning v1.5 decryption is not a session-key protocol.
+// Use random for blinding and propagate random-source errors.
 func DecryptPKCS1v15(random io.Reader, priv *PrivateKey, ciphertext []byte) ([]byte, error) {
-	valid, em, index, err := decryptPKCS1v15(priv, ciphertext)
+	valid, em, index, err := decryptPKCS1v15(random, priv, ciphertext)
 	if err != nil {
 		return nil, err
 	}
@@ -323,6 +306,7 @@ func DecryptPKCS1v15(random io.Reader, priv *PrivateKey, ciphertext []byte) ([]b
 }
 
 func decryptPKCS1v15(
+	random io.Reader,
 	priv *PrivateKey,
 	ciphertext []byte,
 ) (valid int, em []byte, index int, err error) {
@@ -330,9 +314,16 @@ func decryptPKCS1v15(
 	if len(ciphertext) != k || k < 11 {
 		return 0, nil, 0, ErrDecryption
 	}
-	m, err := RSASP1(priv, OS2IP(ciphertext))
-	if err != nil {
+	if random == nil {
+		return 0, nil, 0, ErrInvalidOptions
+	}
+	c := OS2IP(ciphertext)
+	if c.Cmp(priv.N) >= 0 {
 		return 0, nil, 0, ErrDecryption
+	}
+	m, err := privateOpBlinded(random, priv, c)
+	if err != nil {
+		return 0, nil, 0, err
 	}
 
 	em, err = I2OSP(m, k)
@@ -366,12 +357,16 @@ func decryptPKCS1v15(
 // ciphertext length/range can return ErrDecryption. On valid input copy the
 // recovered key into key. Study RFC 8017 7.2.2 notes and Go's API contract;
 // no padding-validity branch may be exposed to the caller.
+// Use random for blinding; reader errors leave key unchanged and are returned.
 func DecryptPKCS1v15SessionKey(random io.Reader, priv *PrivateKey, ciphertext, key []byte) error {
 	k := priv.Size()
 	if k < 11 || len(key) > k-11 {
 		return ErrDecryption
 	}
-	valid, em, index, err := decryptPKCS1v15(priv, ciphertext)
+	if random == nil {
+		return ErrInvalidOptions
+	}
+	valid, em, index, err := decryptPKCS1v15(random, priv, ciphertext)
 	if err != nil {
 		return err
 	}
@@ -385,8 +380,11 @@ func DecryptPKCS1v15SessionKey(random io.Reader, priv *PrivateKey, ciphertext, k
 
 // decryptSessionKey first fills a fresh buffer from random, then calls
 // DecryptPKCS1v15SessionKey. On malformed padding it returns that fallback.
-// Propagate random-source errors before attempting decryption.
+// Propagate random-source errors from fallback generation or blinding.
 func decryptSessionKey(random io.Reader, priv *PrivateKey, ciphertext []byte, length int) ([]byte, error) {
+	if random == nil {
+		return nil, ErrInvalidOptions
+	}
 	key := make([]byte, length)
 	_, err := io.ReadFull(random, key)
 	if err != nil {

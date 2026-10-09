@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"testing"
 )
@@ -155,6 +156,7 @@ func TestPKCS1v15EncryptionInterop(t *testing.T) {
 func TestSessionKeyFallback(t *testing.T) {
 	// RFC 8017 7.2.2 notes + Go SessionKeyLen contract; pre-randomized fallback
 	// remains unchanged on invalid padding or a wrong decoded key length.
+	// The local RSA-11c contract consumes fallback bytes before blinding bytes.
 	for _, mode := range []string{"valid", "padding", "wrong_length"} {
 		for _, api := range []string{"buffer", "interface"} {
 			t.Run(mode+"/"+api, func(t *testing.T) {
@@ -176,7 +178,8 @@ func TestSessionKeyFallback(t *testing.T) {
 				if api == "buffer" {
 					err = DecryptPKCS1v15SessionKey(rand.Reader, key, ct, got)
 				} else {
-					got, err = key.Decrypt(bytes.NewReader(fallback), ct, &stdrsa.PKCS1v15DecryptOptions{SessionKeyLen: 16})
+					random := io.MultiReader(bytes.NewReader(fallback), rand.Reader)
+					got, err = key.Decrypt(random, ct, &stdrsa.PKCS1v15DecryptOptions{SessionKeyLen: 16})
 				}
 				want := fallback
 				if mode == "valid" {

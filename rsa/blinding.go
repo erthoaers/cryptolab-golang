@@ -17,8 +17,8 @@ import (
 // modulo n. The value 1 is allowed. Do not force candidates to be odd or prime,
 // or reduce out-of-range candidates modulo n.
 //
-// Return independent integers; preserve n. This helper is not yet connected
-// to the encryption or signature schemes. See docs/rsa.md, step RSA-11a.
+// Return independent integers; preserve n. Used by privateOpBlinded for
+// decryption and signing. See docs/rsa.md, step RSA-11a.
 func randomBlindingFactor(random io.Reader, n *big.Int) (r, rInv *big.Int, err error) {
 	if n == nil || n.Cmp(big.NewInt(1)) <= 0 || n.Bit(0) == 0 {
 		return nil, nil, ErrInvalidKey
@@ -63,7 +63,7 @@ func randomBlindingFactor(random io.Reader, n *big.Int) (r, rInv *big.Int, err e
 // Compute xBlinded = x * r^E mod N, apply RSASP1 to xBlinded, and multiply the
 // result by rInv modulo N. Return a new integer without modifying or retaining
 // mutable aliases to x or key fields. Every error returns a nil result.
-// This exercise is not yet connected to the encryption or signature schemes.
+// Used by OAEP and PKCS #1 v1.5 decryption, and PSS and PKCS #1 v1.5 signing.
 func privateOpBlinded(random io.Reader, key *PrivateKey, x *big.Int) (*big.Int, error) {
 	if x == nil || x.Sign() < 0 || x.Cmp(key.N) >= 0 {
 		return nil, ErrRepresentativeOutOfRange
