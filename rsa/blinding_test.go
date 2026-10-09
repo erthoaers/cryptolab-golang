@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"reflect"
 	"testing"
 )
 
@@ -174,5 +175,197 @@ func TestBlindingFactorReader(t *testing.T) {
 				t.Fatalf("reader failure: r=%v, rInv=%v, err=%v; want %v", r, rInv, err, tc.want)
 			}
 		})
+	}
+}
+
+// RSA-11b references: RFC 8017 / PKCS #1 v2.2 (November 2016), sections
+// 5.1.2 and 5.2.1 define the representative bounds and equivalent direct/CRT
+// private operations. Multiplicative blinding follows the historical source
+// cited above; reader errors, precedence and ownership are local contracts.
+// Tiny cases use the local toyKey and independent smallPower oracle. Large
+// cases use the public test-only PEM fixtures documented in helpers_test.go
+// and math/big.Exp as the oracle, not another primitive under test.
+
+func setBlindingKeyPath(t *testing.T, key *PrivateKey, path string) {
+	t.Helper()
+	switch path {
+	case "direct":
+		key.Primes = nil
+		key.Precomputed = PrecomputedValues{}
+	case "crt":
+	case "crt_only":
+		key.D = nil
+	case "partial_crt":
+		key.Precomputed.Qinv = nil
+	default:
+		t.Fatalf("unknown test key path: %s", path)
+	}
+}
+
+// Unlike keySnapshot, this also handles the direct representation with no
+// Primes and the CRT-only representation with no D. Int.String handles nil.
+func blindingKeySnapshot(key *PrivateKey) []string {
+	values := []string{fmt.Sprint(key.E), key.N.String(), key.D.String()}
+	values = append(values, fmt.Sprint(len(key.Primes)), fmt.Sprint(key.Primes == nil))
+	for _, p := range key.Primes {
+		values = append(values, p.String())
+	}
+	return append(values, key.Precomputed.Dp.String(), key.Precomputed.Dq.String(), key.Precomputed.Qinv.String())
+}
+
+func TestPrivateOpBlinded(t *testing.T) {
+	for _, path := range []string{"direct", "crt", "crt_only", "partial_crt"} {
+		for _, factor := range []int64{1, 2, 42, 3232} {
+			t.Run(fmt.Sprintf("%s/r=%d", path, factor), func(t *testing.T) {
+				defer failUnfinished(t)
+				key := toyKey()
+				setBlindingKeyPath(t, key, path)
+				before := blindingKeySnapshot(key)
+				for _, value := range []int64{0, 1, 2, 42, 53, 61, 2790, 3232} {
+					x := big.NewInt(value)
+					input := []byte{byte(factor >> 8), byte(factor), 0xaa}
+					random := bytes.NewReader(input)
+					got, err := privateOpBlinded(random, key, x)
+					if err != nil {
+						t.Fatalf("x=%d: %v", value, err)
+					}
+					requireInt(t, got, big.NewInt(smallPower(value, 413, 3233)))
+					if random.Len() != 1 {
+						t.Fatalf("x=%d: incorrect randomness consumption", value)
+					}
+					if x.Cmp(big.NewInt(value)) != 0 || !reflect.DeepEqual(before, blindingKeySnapshot(key)) {
+						t.Fatalf("x=%d: inputs changed", value)
+					}
+					got.SetInt64(-1)
+					if x.Cmp(big.NewInt(value)) != 0 || !reflect.DeepEqual(before, blindingKeySnapshot(key)) {
+						t.Fatalf("x=%d: result aliases an input or key field", value)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPrivateOpBlindedBounds(t *testing.T) {
+	for _, name := range []string{"nil", "negative", "n", "above_n"} {
+		t.Run(name, func(t *testing.T) {
+			defer failUnfinished(t)
+			key := toyKey()
+			before := blindingKeySnapshot(key)
+			x := map[string]*big.Int{
+				"nil": nil, "negative": big.NewInt(-1),
+				"n": key.N, "above_n": big.NewInt(3234),
+			}[name]
+			input := x.String()
+			random := &blindingCountingReader{reader: failedReader{}}
+			for _, source := range []io.Reader{random, nil} {
+				got, err := privateOpBlinded(source, key, x)
+				if got != nil || !errors.Is(err, ErrRepresentativeOutOfRange) || random.calls != 0 {
+					t.Fatalf("got=%v, err=%v, reads=%d", got, err, random.calls)
+				}
+				if x.String() != input || !reflect.DeepEqual(before, blindingKeySnapshot(key)) {
+					t.Fatal("inputs changed on invalid representative")
+				}
+			}
+		})
+	}
+}
+
+func TestPrivateOpBlindedReader(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		x      int64
+		random io.Reader
+		want   error
+	}{
+		{"nil", 2790, nil, ErrInvalidOptions},
+		{"failed", 2790, failedReader{}, errEntropy},
+		{"eof", 2790, bytes.NewReader(nil), io.EOF},
+		{"short", 2790, bytes.NewReader([]byte{0}), io.ErrUnexpectedEOF},
+		{"zero_still_needs_randomness", 0, failedReader{}, errEntropy},
+		{"one_still_needs_randomness", 1, failedReader{}, errEntropy},
+		{"error_after_rejection", 2790, io.MultiReader(bytes.NewReader([]byte{0, 53}), failedReader{}), errEntropy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer failUnfinished(t)
+			key := toyKey()
+			before := blindingKeySnapshot(key)
+			x := big.NewInt(tc.x)
+			got, err := privateOpBlinded(tc.random, key, x)
+			if got != nil || !errors.Is(err, tc.want) {
+				t.Fatalf("got=%v, err=%v; want nil, %v", got, err, tc.want)
+			}
+			if x.Cmp(big.NewInt(tc.x)) != 0 || !reflect.DeepEqual(before, blindingKeySnapshot(key)) {
+				t.Fatal("inputs changed on reader error")
+			}
+		})
+	}
+	t.Run("fragmented_reads_and_retries", func(t *testing.T) {
+		defer failUnfinished(t)
+		// Reject zero, nonunit 53, N and N+2; then accept r=42.
+		input := bytes.NewReader([]byte{0, 0, 0, 53, 0x0c, 0xa1, 0x0c, 0xa3, 0, 42, 0xaa})
+		random := &blindingCountingReader{reader: input, chunk: 1}
+		got, err := privateOpBlinded(random, toyKey(), big.NewInt(2790))
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireInt(t, got, big.NewInt(65))
+		if input.Len() != 1 {
+			t.Fatal("incorrect randomness consumption after retries")
+		}
+	})
+}
+
+func TestPrivateOpBlindedLarge(t *testing.T) {
+	for _, bits := range []int{2048, 2049} {
+		for _, path := range []string{"direct", "crt_only"} {
+			t.Run(fmt.Sprintf("%d/%s", bits, path), func(t *testing.T) {
+				defer failUnfinished(t)
+				key := exerciseFixture(t, bits)
+				d := new(big.Int).Set(key.D)
+				p := new(big.Int).Set(key.Primes[0])
+				nMinusOne := new(big.Int).Sub(key.N, big.NewInt(1))
+				setBlindingKeyPath(t, key, path)
+				before := blindingKeySnapshot(key)
+				for _, factor := range []*big.Int{big.NewInt(2), nMinusOne} {
+					for _, x := range []*big.Int{big.NewInt(0), big.NewInt(1), big.NewInt(2790), p, nMinusOne} {
+						input := x.String()
+						want := new(big.Int).Exp(x, d, key.N)
+						entropy := factor.FillBytes(make([]byte, key.Size()))
+						random := bytes.NewReader(append(entropy, 0xaa))
+						got, err := privateOpBlinded(random, key, x)
+						if err != nil {
+							t.Fatal(err)
+						}
+						requireInt(t, got, want)
+						if random.Len() != 1 || x.String() != input || !reflect.DeepEqual(before, blindingKeySnapshot(key)) {
+							t.Fatal("changed inputs or consumed the wrong number of random bytes")
+						}
+						got.SetInt64(-1)
+						if x.String() != input || !reflect.DeepEqual(before, blindingKeySnapshot(key)) {
+							t.Fatal("result aliases an input or key field")
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPrivateOpBlindedSharedInput(t *testing.T) {
+	defer failUnfinished(t)
+	key := toyKey()
+	before := blindingKeySnapshot(key)
+	got, err := privateOpBlinded(bytes.NewReader([]byte{0, 42}), key, key.Primes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireInt(t, got, big.NewInt(2806))
+	if !reflect.DeepEqual(before, blindingKeySnapshot(key)) {
+		t.Fatal("input aliased to a key field was modified")
+	}
+	got.SetInt64(-1)
+	if !reflect.DeepEqual(before, blindingKeySnapshot(key)) {
+		t.Fatal("result aliases a key field")
 	}
 }

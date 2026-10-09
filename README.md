@@ -10,7 +10,7 @@ An educational Go library for implementing cryptographic algorithms from publish
 | `sha256` | SHA-224 and SHA-256, with one-shot and streaming interfaces | Implemented | [SHA-256](docs/sha256.md), [SHA-224](docs/sha224.md) |
 | `sha512` | SHA-384, SHA-512, SHA-512/224, and SHA-512/256 | Implemented, including streaming input | [SHA-512 family](docs/sha512.md) |
 | `aes` | AES-128, AES-192, and AES-256 | Implements `cipher.Block` | [AES](docs/aes.md) |
-| `rsa` | PKCS #1 primitives, key validation and generation, MGF1, encryption, and signatures | OAEP, PSS, PKCS #1 v1.5, session-key fallback, and key generation implemented; private-operation blinding remains an exercise | [RSA](docs/rsa.md) |
+| `rsa` | PKCS #1 primitives, key validation and generation, MGF1, encryption, and signatures | OAEP, PSS, PKCS #1 v1.5, session-key fallback, key generation, and blinding-factor sampling implemented; blinded private operations remain an exercise | [RSA](docs/rsa.md) |
 | `ed25519` | Pure Ed25519 from RFC 8032 | Step-by-step exercises; implementation pending | [Ed25519](docs/ed25519.md) |
 | `sha3` | Four SHA-3 hashes (`hash.Hash`) and two SHAKE XOFs (`hash.XOF`) | Streaming interface scaffold; algorithms remain exercises | [FIPS 202](docs/fips202.md) |
 
@@ -55,7 +55,7 @@ go test ./... -count=1
 go vet ./...
 ```
 
-The full test suite includes the unfinished RSA blinding-factor exercise, Ed25519, and SHA-3 / SHAKE exercises. Their tests currently fail at the remaining TODOs. The implemented RSA schemes and key generation have separate regression coverage. Compilation, test-vector transcription checks, and algorithm tests verify different properties. Tests for unfinished exercises are not skipped.
+The full test suite includes the unfinished RSA exercise for blinded private operations, Ed25519, and SHA-3 / SHAKE exercises. Their tests currently fail at the remaining TODOs. The implemented RSA schemes, key generation, and blinding-factor sampler have separate regression coverage. Compilation, test-vector transcription checks, and algorithm tests verify different properties. Tests for unfinished exercises are not skipped.
 
 Each guide includes test commands for individual implementation steps. Implemented hash functions can also be fuzzed against the Go standard library:
 

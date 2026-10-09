@@ -48,3 +48,22 @@ func randomBlindingFactor(random io.Reader, n *big.Int) (r, rInv *big.Int, err e
 		}
 	}
 }
+
+// privateOpBlinded computes x^d mod N using multiplicative blinding.
+// As with the section 5 primitives, key must be valid and unmodified. N and E
+// are required, together with D or the complete two-prime CRT representation.
+// A partial CRT cache falls back to D, following RSASP1's selection rules.
+//
+// Reject nil, negative, or >= N representatives with
+// ErrRepresentativeOutOfRange before reading randomness. For every valid x,
+// including 0 and 1, sample r and rInv with randomBlindingFactor. Propagate its
+// errors, including ErrInvalidOptions for a nil reader; never fall back to an
+// unblinded operation on a reader error.
+//
+// Compute xBlinded = x * r^E mod N, apply RSASP1 to xBlinded, and multiply the
+// result by rInv modulo N. Return a new integer without modifying or retaining
+// mutable aliases to x or key fields. Every error returns a nil result.
+// This exercise is not yet connected to the encryption or signature schemes.
+func privateOpBlinded(random io.Reader, key *PrivateKey, x *big.Int) (*big.Int, error) {
+	panic(todo("TODO RSA-11b: blind a representative, apply the private operation, and unblind"))
+}
